@@ -138,3 +138,52 @@ print(data.test_mask.sum())  # 1000
 
 
 # ====================================== MINI-BATCHES ==============================================
+
+# Neural Networks are generally trained in a batch-wise fashion. PyTorch Geometric achieves
+# parallelization over a mini-batch by creating sparse block diagonal adjacency matrices (defined
+# by edge_index and edge_attr) and concatenating feature and target matrices in the node dimension.
+# This composition allows differing number of nodes and edges over examples in one batch.
+
+# PyTorch Geometric consists its own torch_geometric.data.DataLoader, which already takes care of
+# this concatenation process. Let’s learn about it in an example:
+
+from torch_geometric.datasets import TUDataset
+from torch_geometric.data import DataLoader
+
+dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
+loader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+for batch in loader:
+    batch  # Batch(x=[1082, 21], edge_index=[2, 4066], y=[32], batch=[1082])
+    batch.num_graphs  # 32
+
+# torch_geometric.data.Batch inherits from torch_geometric.data.Data and contains an additional
+# attribute: batch
+# batch is a column vector of graph identifiers for all nodes of all graphs in the batch:
+# batch = [0 ... 0 1 ... n-2 n-1 ... n-1].T
+
+# You can use it to, e.g., average node features in the node dimension for each graph individually:
+from torch_scatter import scatter_mean
+from torch_geometric.dataset import TUDataset
+from torch_geometric.data import DataLoader
+
+dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
+loader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+for data in loader:
+    data  # Batch(x=[1082, 21], edge_index=[2, 4066], y=[32], batch=[1082])
+    data.num_graphs  # 32
+    x = scatter_mean(data.x, data.batch, dim=0)
+    x.size()  # torch.Size([32, 21])
+
+
+# ================================== DATA TRANSFORMS ===============================================
+
+# ransforms are a common way in torchvision to transform images and perform augmentation. PyTorch
+# Geometric comes with its own transforms, which expect a Data object as input and return a new
+# transformed Data object. Transforms can be chained together using
+# torch_geometric.transforms.Compose and are applied before saving a processed dataset
+# (pre_transform) on disk or before accessing a graph in a dataset (transform).
+
+# Let’s look at an example, where we apply transforms on the ShapeNet dataset (containing 17,000
+# 3D shape point clouds and per point labels from 16 shape categories).
