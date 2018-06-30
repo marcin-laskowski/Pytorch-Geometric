@@ -164,7 +164,7 @@ for batch in loader:
 
 # You can use it to, e.g., average node features in the node dimension for each graph individually:
 from torch_scatter import scatter_mean
-from torch_geometric.dataset import TUDataset
+from torch_geometric.datasets import TUDataset
 from torch_geometric.data import DataLoader
 
 dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
@@ -187,3 +187,95 @@ for data in loader:
 
 # Let’s look at an example, where we apply transforms on the ShapeNet dataset (containing 17,000
 # 3D shape point clouds and per point labels from 16 shape categories).
+
+from torch_geometric.datasets import ShapeNet
+
+dataset = ShapeNet(root='/tmp/ShapeNet', category='Airplane')
+print(data[0])  # Data(pos=[2518, 3], y=[2518])
+
+# We can convert the point cloud dataset into a graph dataset by generating nearest neighbor graphs
+# from the point clouds via transforms:
+
+import torch_geometric.transforms as T
+from torch_geometric.datasets import ShapeNet
+
+dataset = ShapeNet(root='/tmp/ShapeNet', category='Airplane', pre_transform=T.NNGraph(k=6))
+print(data[0])  # Data(edge_index=[2, 17768], pos=[2518, 3], y=[2518])
+
+# In addition, we can use the transform argument to randomly augment a Data object,
+# e.g. translating each node position by a small number:
+
+import torch_geometric.transforms as T
+from torch_geometric.datasets import ShapeNet
+
+dataset = ShapeNet(root='/tmp/ShapeNet', category='Airplane', pre_transform=T.NNGraph(k=6),
+                   transform=T.RandomTranslate(0.01))
+print(data[0])  # Data(edge_index=[2, 17768], pos=[2518, 3], y=[2518])
+
+
+# =============================== LEARNING METHODS ON GRAPHS =======================================
+
+# it’s time to implement our first graph neural network!
+
+# We will use a simple GCN layer and replicate the experiments on the Cora citation dataset.
+# For a high-level explanation on GCN, have a look at its blog post:
+# http://tkipf.github.io/graph-convolutional-networks/
+
+# First we need to load the Cora dataset:
+from torch_geometric.datasets import Planetoid
+
+dataset = Planetoid(root='/tmp/Cora', name='Cora')
+data = dataset[0]
+print(dataset)
+
+# Implementation of the Two-layer GRAPH CONVOLUTION Network
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch_geometric.nn import GCNConv
+
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = GCNConv(data.num_features, 16)
+        self.conv2 = GCNConv(16, data.num_classes)
+
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index
+
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training)
+        x = self.conv2(x, edge_index)
+
+        return F.log_softmax(x, dim=1)
+
+# We use ReLU as our non-linearity acitivation function and output a softmax distribution over
+# the number of classes. Let’s train this model on the train nodes for 200 epochs.
+
+
+# perform calculations on GPU if available
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# define neural network
+model = Net().to(device)
+data = dataset[0].to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+
+# perform training
+model.train()
+
+for epoch in range(200):
+    optimizer.zero_grad()
+    out = model(data)
+    loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
+    loss.backward()
+    optimizer.step()
+
+# Finally we can evaluate our model on the test nodes:
+model.eval()
+_, pred = model(data).max(dim=1)
+correct = pred[data.test_mask].eq(data.y[data.test_mask]).sum().item()
+acc = correct / data.test_mask.sum().item()
+print('Accuracy: {:,.4f}'.format(acc))
